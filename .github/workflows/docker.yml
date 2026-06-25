@@ -96,7 +96,8 @@ jobs:
           OPENAI_API_KEY: ""
           NOUS_API_KEY: ""
         run: |
-          scripts/run_tests.sh tests/docker/test_config_migration.py --file-timeout 300 -- -v --tb=short
+          source .venv/bin/activate
+          python -m pytest -m tests/docker/
 
       - name: Log in to Docker Hub
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'release'
@@ -211,7 +212,8 @@ jobs:
           OPENAI_API_KEY: ""
           NOUS_API_KEY: ""
         run: |
-          scripts/run_tests.sh tests/docker/test_smoke.py --file-timeout 300 -- -v --tb=short
+          source .venv/bin/activate
+          python -m pytest -m tests/docker/
 
       - name: Log in to Docker Hub
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'release'
