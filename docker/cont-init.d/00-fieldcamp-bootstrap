@@ -1,42 +1,48 @@
 #!/command/with-contenv sh
-# FieldCamp: refresh the GTM profile (config/SOUL/skills) + brain into $HERMES_HOME
-# before 01-hermes-setup. Always exits 0 so a hiccup never blocks boot.
+# FieldCamp: seed/refresh the GTM profile + brain into $HERMES_HOME, then
+# DETERMINISTICALLY repair config.yaml in place (python, not sed) so a stale
+# volume copy can't keep a broken config alive. Always exits 0.
 
 DATA="${HERMES_HOME:-/opt/data}"
 echo "[fieldcamp] bootstrap starting (DATA=$DATA)"
 
-if [ -z "${GITHUB_DEPLOY_TOKEN:-}" ]; then
-  echo "[fieldcamp] WARN: no GITHUB_DEPLOY_TOKEN — cannot clone profile/brain"
-  exit 0
-fi
-AUTH="https://x-access-token:${GITHUB_DEPLOY_TOKEN}@github.com/fieldcampai"
-
-# 1) refresh the distribution-owned profile (config.yaml, SOUL.md, skills/) every boot.
-#    (cron/ + memories/ + state.db are runtime-owned — left untouched.)
-rm -rf /tmp/profile
-if git clone --depth 1 "$AUTH/fieldcamp-hermes-profile" /tmp/profile; then
-  for item in config.yaml SOUL.md skills; do
-    [ -e "/tmp/profile/$item" ] && cp -a "/tmp/profile/$item" "$DATA/"
-  done
+if [ -n "${GITHUB_DEPLOY_TOKEN:-}" ]; then
+  AUTH="https://x-access-token:${GITHUB_DEPLOY_TOKEN}@github.com/fieldcampai"
+  # best-effort refresh of distribution-owned files (config/SOUL/skills)
   rm -rf /tmp/profile
-  cfg="$DATA/config.yaml"
-  # container paths (Mac -> image PATH commands)
-  sed -i 's#/Users/jeelpatel/\.local/bin/uvx#uvx#g; s#/Users/jeelpatel/\.local/bin/qmd#qmd#g; s#/opt/homebrew/bin/pipx#pipx#g' "$cfg" 2>/dev/null
-  # quote bare @-prefixed npm args (a leading @ is invalid YAML and breaks the whole parse)
-  sed -i -E 's/^([[:space:]]*-[[:space:]]+)(@[^"[:space:]][^[:space:]]*)[[:space:]]*$/\1"\2"/' "$cfg" 2>/dev/null
-  echo "[fieldcamp] profile refreshed + config repaired"
+  if git clone --depth 1 "$AUTH/fieldcamp-hermes-profile" /tmp/profile 2>/dev/null; then
+    [ -f /tmp/profile/config.yaml ] && cp -f /tmp/profile/config.yaml "$DATA/config.yaml"
+    [ -f /tmp/profile/SOUL.md ] && cp -f /tmp/profile/SOUL.md "$DATA/SOUL.md"
+    [ -d /tmp/profile/skills ] && rm -rf "$DATA/skills" && cp -a /tmp/profile/skills "$DATA/skills"
+    rm -rf /tmp/profile
+    echo "[fieldcamp] profile refreshed from repo"
+  else
+    echo "[fieldcamp] WARN: profile refresh clone failed — will repair existing config in place"
+  fi
+  # brain (clone once)
+  [ ! -d "$DATA/brain/.git" ] && { git clone --depth 1 "$AUTH/fieldcamp-gtm-brain" "$DATA/brain" 2>/dev/null && echo "[fieldcamp] brain cloned" || echo "[fieldcamp] WARN brain clone failed"; }
 else
-  echo "[fieldcamp] ERROR: profile clone failed (check GITHUB_DEPLOY_TOKEN access)"
+  echo "[fieldcamp] WARN: no GITHUB_DEPLOY_TOKEN"
 fi
 
-# 2) brain -> $HERMES_HOME/brain (clone once; cron pulls updates later)
-if [ ! -d "$DATA/brain/.git" ]; then
-  echo "[fieldcamp] cloning brain..."
-  if git clone --depth 1 "$AUTH/fieldcamp-gtm-brain" "$DATA/brain"; then
-    echo "[fieldcamp] brain seeded ($(find "$DATA/brain" -name '*.md' 2>/dev/null | wc -l) notes)"
-  else
-    echo "[fieldcamp] ERROR: brain clone failed"
-  fi
+# DETERMINISTIC in-place repair of whatever config.yaml is on the volume.
+if [ -f "$DATA/config.yaml" ]; then
+  python3 - "$DATA/config.yaml" <<'PYEOF'
+import re, sys
+p = sys.argv[1]
+lines = open(p, encoding="utf-8").read().splitlines()
+out = []
+for l in lines:
+    # quote bare @-prefixed list args (a leading @ is invalid YAML)
+    l = re.sub(r'^(\s*-\s+)(@[^"\s]\S*)\s*$', r'\1"\2"', l)
+    # rewrite Mac-local tool paths to image PATH commands
+    l = (l.replace("/Users/jeelpatel/.local/bin/uvx", "uvx")
+          .replace("/Users/jeelpatel/.local/bin/qmd", "qmd")
+          .replace("/opt/homebrew/bin/pipx", "pipx"))
+    out.append(l)
+open(p, "w", encoding="utf-8").write("\n".join(out) + "\n")
+print("[fieldcamp] config.yaml repaired in place (@-args quoted, paths fixed)")
+PYEOF
 fi
 
 echo "[fieldcamp] bootstrap done"
