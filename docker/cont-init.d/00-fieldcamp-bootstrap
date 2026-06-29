@@ -1,0 +1,45 @@
+#!/command/with-contenv sh
+# FieldCamp: seed $HERMES_HOME with the GTM profile + brain before hermes setup.
+# Runs before 01-hermes-setup (which chowns the volume + seeds default config).
+# Resilient: always exits 0 so a clone hiccup never blocks boot — read logs for [fieldcamp].
+
+DATA="${HERMES_HOME:-/opt/data}"
+echo "[fieldcamp] bootstrap starting (DATA=$DATA)"
+
+if [ -z "${GITHUB_DEPLOY_TOKEN:-}" ]; then
+  echo "[fieldcamp] WARN: no GITHUB_DEPLOY_TOKEN set — cannot clone profile/brain"
+  exit 0
+fi
+AUTH="https://x-access-token:${GITHUB_DEPLOY_TOKEN}@github.com/fieldcampai"
+
+# 1) profile -> $HERMES_HOME (config.yaml, SOUL.md, skills/) — only if not already seeded
+if [ ! -f "$DATA/config.yaml" ]; then
+  echo "[fieldcamp] cloning profile..."
+  rm -rf /tmp/profile
+  if git clone --depth 1 "$AUTH/fieldcamp-hermes-profile" /tmp/profile; then
+    cp -a /tmp/profile/. "$DATA/" 2>/dev/null
+    rm -rf /tmp/profile "$DATA/.git" "$DATA/.gitignore" "$DATA/README.md" "$DATA/RAILWAY.md" "$DATA/.env.template"
+    # rewrite Mac-local tool paths to the image's PATH commands
+    sed -i 's#/Users/jeelpatel/\.local/bin/uvx#uvx#g; s#/Users/jeelpatel/\.local/bin/qmd#qmd#g; s#/opt/homebrew/bin/pipx#pipx#g' "$DATA/config.yaml" 2>/dev/null || true
+    echo "[fieldcamp] profile seeded"
+  else
+    echo "[fieldcamp] ERROR: profile clone failed (check GITHUB_DEPLOY_TOKEN access)"
+  fi
+else
+  echo "[fieldcamp] config.yaml already present — skipping profile clone"
+fi
+
+# 2) brain -> $HERMES_HOME/brain (the knowledge vault qmd + skills read)
+if [ ! -d "$DATA/brain/.git" ]; then
+  echo "[fieldcamp] cloning brain..."
+  if git clone --depth 1 "$AUTH/fieldcamp-gtm-brain" "$DATA/brain"; then
+    echo "[fieldcamp] brain seeded ($(find "$DATA/brain" -name '*.md' 2>/dev/null | wc -l) notes)"
+  else
+    echo "[fieldcamp] ERROR: brain clone failed"
+  fi
+else
+  echo "[fieldcamp] brain already present — skipping"
+fi
+
+echo "[fieldcamp] bootstrap done"
+exit 0
