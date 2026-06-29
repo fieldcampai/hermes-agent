@@ -390,6 +390,28 @@ seed_one ".env" ".env.example"
 seed_one "config.yaml" "cli-config.yaml.example"
 seed_one "SOUL.md" "docker/SOUL.md"
 
+# --- FieldCamp: repair config.yaml every boot (heals a stale broken volume copy) ---
+# Quote @-prefixed npm args (a bare @ is invalid YAML and breaks the whole parse)
+# and rewrite Mac-local tool paths to the image's PATH commands.
+if [ -f "$HERMES_HOME/config.yaml" ]; then
+    python3 - "$HERMES_HOME/config.yaml" <<'PYEOF' || echo "[stage2] FieldCamp: config repair skipped"
+import re, sys
+p = sys.argv[1]
+lines = open(p, encoding="utf-8").read().splitlines()
+out = []
+for l in lines:
+    l = re.sub(r'^(\s*-\s+)(@[^"\s]\S*)\s*$', r'\1"\2"', l)
+    l = (l.replace("/Users/jeelpatel/.local/bin/uvx", "uvx")
+          .replace("/Users/jeelpatel/.local/bin/qmd", "qmd")
+          .replace("/opt/homebrew/bin/pipx", "pipx"))
+    out.append(l)
+open(p, "w", encoding="utf-8").write("\n".join(out) + "\n")
+print("[stage2] FieldCamp: config.yaml repaired (@-args quoted, paths fixed)")
+PYEOF
+    chown hermes:hermes "$HERMES_HOME/config.yaml" 2>/dev/null || true
+    chmod 640 "$HERMES_HOME/config.yaml" 2>/dev/null || true
+fi
+
 # .env holds API keys and secrets — restrict to owner-only access. Applied
 # unconditionally (not only on first-seed) so a host-mounted .env that was
 # created with a permissive umask gets tightened on every container start.
