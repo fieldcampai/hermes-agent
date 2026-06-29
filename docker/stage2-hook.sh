@@ -390,6 +390,14 @@ seed_one ".env" ".env.example"
 seed_one "config.yaml" "cli-config.yaml.example"
 seed_one "SOUL.md" "docker/SOUL.md"
 
+# --- FieldCamp: free the small (500 MB) volume — clear regenerable caches/logs ---
+# Caches now redirect to /tmp via env vars; purge any stale ones already on the volume.
+rm -rf "$HERMES_HOME/.cache" "$HERMES_HOME/.npm" "$HERMES_HOME/.local/share/uv" \
+       "$HERMES_HOME/.local/share/virtualenv" "$HERMES_HOME/lazy-packages" \
+       "$HERMES_HOME/audio_cache" "$HERMES_HOME/image_cache" "$HERMES_HOME/sandboxes" 2>/dev/null || true
+find "$HERMES_HOME/logs" -type f -delete 2>/dev/null || true
+find "$HERMES_HOME/sessions" -name 'request_dump_*' -delete 2>/dev/null || true
+
 # --- FieldCamp: overwrite config.yaml with the baked clean config every boot ---
 # The persistent volume can hold a stale/broken config; we replace it with the
 # known-good config baked into the image (valid YAML, container tool paths).
