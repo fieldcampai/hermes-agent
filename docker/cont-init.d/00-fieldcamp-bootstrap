@@ -1,35 +1,35 @@
 #!/command/with-contenv sh
-# FieldCamp: seed $HERMES_HOME with the GTM profile + brain before hermes setup.
-# Runs before 01-hermes-setup (which chowns the volume + seeds default config).
-# Resilient: always exits 0 so a clone hiccup never blocks boot — read logs for [fieldcamp].
+# FieldCamp: refresh the GTM profile (config/SOUL/skills) + brain into $HERMES_HOME
+# before 01-hermes-setup. Always exits 0 so a hiccup never blocks boot.
 
 DATA="${HERMES_HOME:-/opt/data}"
 echo "[fieldcamp] bootstrap starting (DATA=$DATA)"
 
 if [ -z "${GITHUB_DEPLOY_TOKEN:-}" ]; then
-  echo "[fieldcamp] WARN: no GITHUB_DEPLOY_TOKEN set — cannot clone profile/brain"
+  echo "[fieldcamp] WARN: no GITHUB_DEPLOY_TOKEN — cannot clone profile/brain"
   exit 0
 fi
 AUTH="https://x-access-token:${GITHUB_DEPLOY_TOKEN}@github.com/fieldcampai"
 
-# 1) profile -> $HERMES_HOME (config.yaml, SOUL.md, skills/) — only if not already seeded
-if [ ! -f "$DATA/config.yaml" ]; then
-  echo "[fieldcamp] cloning profile..."
+# 1) refresh the distribution-owned profile (config.yaml, SOUL.md, skills/) every boot.
+#    (cron/ + memories/ + state.db are runtime-owned — left untouched.)
+rm -rf /tmp/profile
+if git clone --depth 1 "$AUTH/fieldcamp-hermes-profile" /tmp/profile; then
+  for item in config.yaml SOUL.md skills; do
+    [ -e "/tmp/profile/$item" ] && cp -a "/tmp/profile/$item" "$DATA/"
+  done
   rm -rf /tmp/profile
-  if git clone --depth 1 "$AUTH/fieldcamp-hermes-profile" /tmp/profile; then
-    cp -a /tmp/profile/. "$DATA/" 2>/dev/null
-    rm -rf /tmp/profile "$DATA/.git" "$DATA/.gitignore" "$DATA/README.md" "$DATA/RAILWAY.md" "$DATA/.env.template"
-    # rewrite Mac-local tool paths to the image's PATH commands
-    sed -i 's#/Users/jeelpatel/\.local/bin/uvx#uvx#g; s#/Users/jeelpatel/\.local/bin/qmd#qmd#g; s#/opt/homebrew/bin/pipx#pipx#g' "$DATA/config.yaml" 2>/dev/null || true
-    echo "[fieldcamp] profile seeded"
-  else
-    echo "[fieldcamp] ERROR: profile clone failed (check GITHUB_DEPLOY_TOKEN access)"
-  fi
+  cfg="$DATA/config.yaml"
+  # container paths (Mac -> image PATH commands)
+  sed -i 's#/Users/jeelpatel/\.local/bin/uvx#uvx#g; s#/Users/jeelpatel/\.local/bin/qmd#qmd#g; s#/opt/homebrew/bin/pipx#pipx#g' "$cfg" 2>/dev/null
+  # quote bare @-prefixed npm args (a leading @ is invalid YAML and breaks the whole parse)
+  sed -i -E 's/^([[:space:]]*-[[:space:]]+)(@[^"[:space:]][^[:space:]]*)[[:space:]]*$/\1"\2"/' "$cfg" 2>/dev/null
+  echo "[fieldcamp] profile refreshed + config repaired"
 else
-  echo "[fieldcamp] config.yaml already present — skipping profile clone"
+  echo "[fieldcamp] ERROR: profile clone failed (check GITHUB_DEPLOY_TOKEN access)"
 fi
 
-# 2) brain -> $HERMES_HOME/brain (the knowledge vault qmd + skills read)
+# 2) brain -> $HERMES_HOME/brain (clone once; cron pulls updates later)
 if [ ! -d "$DATA/brain/.git" ]; then
   echo "[fieldcamp] cloning brain..."
   if git clone --depth 1 "$AUTH/fieldcamp-gtm-brain" "$DATA/brain"; then
@@ -37,8 +37,6 @@ if [ ! -d "$DATA/brain/.git" ]; then
   else
     echo "[fieldcamp] ERROR: brain clone failed"
   fi
-else
-  echo "[fieldcamp] brain already present — skipping"
 fi
 
 echo "[fieldcamp] bootstrap done"
